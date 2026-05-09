@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pop Pit</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="game-shell">
+      <header class="hud" aria-label="Game status">
+        <div class="brand">Pop Pit</div>
+        <div class="center-hud">
+          <div class="difficulty" aria-label="Difficulty">
+            <button class="difficulty-button is-selected" type="button" data-difficulty="easy">Easy</button>
+            <button class="difficulty-button" type="button" data-difficulty="medium">Medium</button>
+            <button class="difficulty-button" type="button" data-difficulty="hard">Hard</button>
+          </div>
+        </div>
+        <div class="stats">
+          <span class="stat"><span class="stat-label">Time</span><span id="timeValue">0:00</span></span>
+        </div>
+      </header>
+
+      <section class="play-wrap" aria-label="Pop Pit play area">
+        <canvas id="gameCanvas" aria-label="Shrinking circle game"></canvas>
+        <div class="score-display" aria-label="Popped score">
+          <span id="scoreValue">0</span>
+        </div>
+        <div class="overlay is-visible" id="startOverlay">
+          <div class="overlay-panel">
+            <h1>Pop Pit</h1>
+            <p class="result-line" id="resultLine">Choose a difficulty and start popping.</p>
+            <button class="primary-button" id="startButton" type="button">Start Game</button>
+          </div>
+        </div>
+        <div class="countdown" id="countdown" aria-live="polite" aria-hidden="true">
+          <span id="countdownValue">3</span>
+        </div>
+        <div class="streak-toast" id="streakToast" aria-live="polite" aria-hidden="true">
+          <span id="streakValue">25 STREAK</span>
+        </div>
+      </section>
+    </main>
+
+    <script src="game.js"></script>
+  </body>
+</html>
