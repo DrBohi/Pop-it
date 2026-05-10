@@ -94,12 +94,12 @@ button {
 
 .score-display {
   position: absolute;
-  top: clamp(48px, 9.5vh, 92px);
+  top: clamp(34px, 7.5vh, 72px);
   left: 50%;
   z-index: 1;
-  min-width: 220px;
+  min-width: 170px;
   color: #121722;
-  font-size: clamp(6.4rem, 16vw, 13rem);
+  font-size: clamp(4.8rem, 12vw, 9.75rem);
   font-weight: 950;
   line-height: 0.78;
   text-align: center;
@@ -140,6 +140,64 @@ button {
   text-transform: uppercase;
 }
 
+.goals {
+  position: absolute;
+  left: 16px;
+  bottom: 108px;
+  z-index: 1;
+  display: grid;
+  gap: 7px;
+  pointer-events: none;
+}
+
+.goal {
+  width: 112px;
+  padding: 7px 9px;
+  border: 1px solid #e4e8ee;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.86);
+  color: #485467;
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-align: center;
+  box-shadow: 0 8px 20px rgba(15, 22, 33, 0.08);
+  transition:
+    background 180ms ease,
+    color 180ms ease,
+    transform 180ms ease;
+}
+
+.goal.is-complete {
+  border-color: #bfe6ce;
+  background: #eafaf0;
+  color: #16783c;
+  transform: scale(1.04);
+}
+
+.freeze-timer {
+  position: absolute;
+  top: clamp(130px, 22vh, 210px);
+  right: 18px;
+  z-index: 2;
+  display: none;
+  min-width: 110px;
+  padding: 8px 11px;
+  border: 1px solid rgba(72, 190, 235, 0.5);
+  border-radius: 8px;
+  background: rgba(232, 250, 255, 0.92);
+  box-shadow: 0 10px 28px rgba(68, 190, 235, 0.2);
+  color: #167aa3;
+  font-size: 0.84rem;
+  font-weight: 900;
+  text-align: center;
+  pointer-events: none;
+}
+
+.freeze-timer.is-visible {
+  display: block;
+  animation: freeze-pulse 900ms ease-in-out infinite alternate;
+}
+
 .streak-toast {
   position: absolute;
   top: clamp(142px, 22vh, 230px);
@@ -168,6 +226,10 @@ button {
   text-align: center;
   white-space: nowrap;
   animation: streak-slam 1050ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.play-wrap.is-shaking {
+  animation: screen-bump 220ms ease-out both;
 }
 
 .play-wrap {
@@ -295,6 +357,37 @@ button {
   }
 }
 
+@keyframes screen-bump {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+
+  20% {
+    transform: translate(-3px, 2px);
+  }
+
+  44% {
+    transform: translate(3px, -2px);
+  }
+
+  68% {
+    transform: translate(-2px, -1px);
+  }
+}
+
+@keyframes freeze-pulse {
+  from {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+
+  to {
+    transform: scale(1.04);
+    filter: brightness(1.08);
+  }
+}
+
 .overlay-panel {
   display: grid;
   justify-items: center;
@@ -371,19 +464,42 @@ button {
   .stats {
     justify-content: center;
     width: 100%;
+    gap: 7px;
   }
 
   .stat {
+    padding: 8px 9px;
     min-width: 0;
     max-width: 170px;
+    font-size: 0.92rem;
   }
 
   .score-display {
-    top: 46px;
-    font-size: clamp(6.4rem, 24vw, 8.6rem);
+    top: 28px;
+    font-size: clamp(4.8rem, 18vw, 6.45rem);
   }
 
   .streak-toast {
     top: clamp(118px, 18vh, 170px);
+  }
+
+  .goals {
+    left: 10px;
+    bottom: 102px;
+    gap: 5px;
+  }
+
+  .goal {
+    width: 94px;
+    padding: 6px 7px;
+    font-size: 0.7rem;
+  }
+
+  .freeze-timer {
+    top: 142px;
+    right: 10px;
+    min-width: 96px;
+    padding: 7px 9px;
+    font-size: 0.76rem;
   }
 }

@@ -18,6 +18,8 @@
           </div>
         </div>
         <div class="stats">
+          <span class="stat"><span class="stat-label">Lives</span><span id="livesValue">3</span></span>
+          <span class="stat"><span class="stat-label">Combo</span><span id="comboValue">0x</span></span>
           <span class="stat"><span class="stat-label">Time</span><span id="timeValue">0:00</span></span>
         </div>
       </header>
@@ -26,6 +28,14 @@
         <canvas id="gameCanvas" aria-label="Shrinking circle game"></canvas>
         <div class="score-display" aria-label="Popped score">
           <span id="scoreValue">0</span>
+        </div>
+        <div class="goals" aria-label="Run goals">
+          <div class="goal" id="goalScore">Reach 50</div>
+          <div class="goal" id="goalCombo">10 Combo</div>
+          <div class="goal" id="goalGold">Pop Gold</div>
+        </div>
+        <div class="freeze-timer" id="freezeTimer" aria-live="polite" aria-hidden="true">
+          Freeze <span id="freezeTimeValue">5.0</span>s
         </div>
         <div class="overlay is-visible" id="startOverlay">
           <div class="overlay-panel">

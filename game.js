@@ -2,20 +2,35 @@ const canvas = document.querySelector("#gameCanvas");
 const ctx = canvas.getContext("2d");
 const timeValue = document.querySelector("#timeValue");
 const scoreValue = document.querySelector("#scoreValue");
+const livesValue = document.querySelector("#livesValue");
+const comboValue = document.querySelector("#comboValue");
 const startOverlay = document.querySelector("#startOverlay");
 const countdown = document.querySelector("#countdown");
 const countdownValue = document.querySelector("#countdownValue");
+const freezeTimer = document.querySelector("#freezeTimer");
+const freezeTimeValue = document.querySelector("#freezeTimeValue");
 const scoreDisplay = document.querySelector(".score-display");
+const playWrap = document.querySelector(".play-wrap");
 const streakToast = document.querySelector("#streakToast");
 const streakValue = document.querySelector("#streakValue");
+const goalScore = document.querySelector("#goalScore");
+const goalCombo = document.querySelector("#goalCombo");
+const goalGold = document.querySelector("#goalGold");
 const resultLine = document.querySelector("#resultLine");
 const startButton = document.querySelector("#startButton");
 const difficultyButtons = [...document.querySelectorAll(".difficulty-button")];
 
 const colors = ["#ef3340", "#ffcf24", "#2f80ed", "#2cc36b", "#ff8a1c", "#9b5cff"];
+const bottomSpawnBuffer = 96;
+const comboWindow = 1600;
+const rushEvery = 18000;
+const rushDuration = 5200;
+const freezeDuration = 5000;
+const iceTexture = loadImage("assets/ice-texture.jpg");
 
 const difficultySettings = {
   easy: {
+    lives: 3,
     startRadius: 58,
     minRadius: 12,
     shrinkPerSecond: 15,
@@ -24,6 +39,7 @@ const difficultySettings = {
     slope: 0.018,
   },
   medium: {
+    lives: 2,
     startRadius: 52,
     minRadius: 11,
     shrinkPerSecond: 19,
@@ -32,6 +48,7 @@ const difficultySettings = {
     slope: 0.024,
   },
   hard: {
+    lives: 1,
     startRadius: 47,
     minRadius: 10,
     shrinkPerSecond: 23,
@@ -49,6 +66,16 @@ let lastFrame = 0;
 let lastSpawn = 0;
 let startedAt = 0;
 let score = 0;
+let popped = 0;
+let lives = 3;
+let combo = 0;
+let bestCombo = 0;
+let lastPopAt = 0;
+let frozenUntil = 0;
+let nextRushAt = 0;
+let rushEndsAt = 0;
+let nextBeatAt = 0;
+let audioContext = null;
 let gameState = "idle";
 let animationFrame = 0;
 let countdownTimer = 0;
@@ -80,23 +107,53 @@ function currentPressure(now) {
   return 1 + elapsedSeconds(now) * settings.slope;
 }
 
-function spawnCircle(now) {
-  const settings = difficultySettings[selectedDifficulty];
-  if (circles.length >= settings.maxCircles) return;
+function isRushActive(now) {
+  return now < rushEndsAt;
+}
 
+function chooseCircleType(now) {
+  if (isRushActive(now)) return Math.random() < 0.16 ? "danger" : "normal";
+
+  const roll = Math.random();
+  if (roll < 0.055) return "gold";
+  if (roll < 0.095) return "freeze";
+  if (roll < 0.13) return "bomb";
+  if (roll < 0.18) return "danger";
+  return "normal";
+}
+
+function specialColor(type) {
+  const palette = {
+    normal: colors[Math.floor(Math.random() * colors.length)],
+    gold: "#ffbf16",
+    freeze: "#73d9ff",
+    bomb: "#202735",
+    danger: "#ff3b30",
+  };
+
+  return palette[type];
+}
+
+function spawnCircle(now, forcedType = null) {
+  const settings = difficultySettings[selectedDifficulty];
+  const maxCircles = settings.maxCircles + (isRushActive(now) ? 2 : 0);
+  if (circles.length >= maxCircles) return;
+
+  const type = forcedType || chooseCircleType(now);
   const radius = settings.startRadius;
   const width = canvas.clientWidth;
   const height = canvas.clientHeight;
   const margin = radius + 8;
+  const maxY = Math.max(margin, height - margin - bottomSpawnBuffer);
   const shouldSpawnLow = now < lowSpawnUntil;
   const zones = reservedSpawnZones(shouldSpawnLow);
-  const minY = shouldSpawnLow ? Math.max(margin, height * 0.48) : margin;
+  const minY = shouldSpawnLow ? Math.min(maxY, Math.max(margin, height * 0.48)) : margin;
   let x = randomBetween(margin, Math.max(margin, width - margin));
-  let y = randomBetween(minY, Math.max(minY, height - margin));
+  let y = randomBetween(minY, maxY);
 
   for (let attempt = 0; attempt < 90; attempt += 1) {
     const candidateX = randomBetween(margin, Math.max(margin, width - margin));
-    const candidateY = randomBetween(minY, Math.max(minY, height - margin));
+    const candidateY = randomBetween(minY, maxY);
 
     if (!zones.some((zone) => circleIntersectsRect(candidateX, candidateY, radius, zone))) {
       x = candidateX;
@@ -111,9 +168,15 @@ function spawnCircle(now) {
     radius,
     baseRadius: radius,
     minRadius: settings.minRadius,
-    shrinkPerSecond: settings.shrinkPerSecond * currentPressure(now),
-    color: colors[Math.floor(Math.random() * colors.length)],
+    shrinkPerSecond:
+      settings.shrinkPerSecond *
+      currentPressure(now) *
+      (type === "danger" ? 1.38 : 1) *
+      (isRushActive(now) ? 0.78 : 1),
+    color: specialColor(type),
     createdAt: now,
+    type,
+    seed: Math.random() * 1000,
   });
 }
 
@@ -154,29 +217,115 @@ function randomBetween(min, max) {
   return min + Math.random() * (max - min);
 }
 
+function loadImage(src) {
+  const image = new Image();
+  image.src = src;
+  return image;
+}
+
 function drawCircle(circle) {
   const highlightX = circle.x - circle.radius * 0.32;
   const highlightY = circle.y - circle.radius * 0.38;
-  const bodyGradient = ctx.createRadialGradient(
-    highlightX,
-    highlightY,
-    circle.radius * 0.12,
-    circle.x,
-    circle.y,
-    circle.radius,
-  );
-  bodyGradient.addColorStop(0, lightenColor(circle.color, 0.36));
-  bodyGradient.addColorStop(0.34, circle.color);
-  bodyGradient.addColorStop(1, darkenColor(circle.color, 0.12));
+  const bodyGradient = createBallGradient(circle, highlightX, highlightY);
 
   ctx.save();
-  ctx.shadowBlur = 9;
-  ctx.shadowColor = "rgba(16, 24, 40, 0.16)";
+  ctx.shadowBlur = circle.type === "normal" ? 9 : 18;
+  ctx.shadowColor = circle.type === "normal" ? "rgba(16, 24, 40, 0.16)" : glowColor(circle.type);
   ctx.beginPath();
   ctx.arc(circle.x, circle.y, circle.radius, 0, Math.PI * 2);
   ctx.fillStyle = bodyGradient;
   ctx.fill();
 
+  if (circle.type === "freeze") {
+    drawIceTexture(circle);
+  }
+
+  if (circle.type === "gold") {
+    drawMetallicShine(circle);
+  }
+
+  if (circle.type === "danger") {
+    drawHazardIcon(circle);
+  }
+
+  if (circle.type === "bomb") {
+    drawBombDetails(circle);
+  }
+
+  if (circle.type !== "bomb" && circle.type !== "danger") {
+    drawGloss(circle, highlightX, highlightY);
+  }
+  ctx.restore();
+}
+
+function createBallGradient(circle, highlightX, highlightY) {
+  const gradient =
+    circle.type === "gold"
+      ? ctx.createLinearGradient(
+          circle.x - circle.radius,
+          circle.y - circle.radius,
+          circle.x + circle.radius,
+          circle.y + circle.radius,
+        )
+      : ctx.createRadialGradient(
+          highlightX,
+          highlightY,
+          circle.radius * 0.12,
+          circle.x,
+          circle.y,
+          circle.radius,
+        );
+
+  if (circle.type === "gold") {
+    gradient.addColorStop(0, "#a66a00");
+    gradient.addColorStop(0.22, "#f6bd35");
+    gradient.addColorStop(0.42, "#fff0a0");
+    gradient.addColorStop(0.58, "#d8920a");
+    gradient.addColorStop(0.78, "#f0b42b");
+    gradient.addColorStop(1, "#8d5600");
+    return gradient;
+  }
+
+  if (circle.type === "freeze") {
+    gradient.addColorStop(0, "#f8feff");
+    gradient.addColorStop(0.34, "#b9f0ff");
+    gradient.addColorStop(0.72, "#69cbea");
+    gradient.addColorStop(1, "#3b9fcb");
+    return gradient;
+  }
+
+  if (circle.type === "bomb") {
+    gradient.addColorStop(0, "#6b7280");
+    gradient.addColorStop(0.34, "#202735");
+    gradient.addColorStop(1, "#080b12");
+    return gradient;
+  }
+
+  if (circle.type === "danger") {
+    gradient.addColorStop(0, "#ff7b4d");
+    gradient.addColorStop(0.42, "#ff3b30");
+    gradient.addColorStop(1, "#95180f");
+    return gradient;
+  }
+
+  gradient.addColorStop(0, lightenColor(circle.color, 0.36));
+  gradient.addColorStop(0.34, circle.color);
+  gradient.addColorStop(1, darkenColor(circle.color, 0.12));
+  return gradient;
+}
+
+function glowColor(type) {
+  const glows = {
+    gold: "rgba(255, 191, 22, 0.46)",
+    freeze: "rgba(115, 217, 255, 0.48)",
+    bomb: "rgba(32, 39, 53, 0.38)",
+    danger: "rgba(255, 59, 48, 0.44)",
+  };
+
+  return glows[type] || "rgba(16, 24, 40, 0.16)";
+}
+
+function drawGloss(circle, highlightX, highlightY) {
   const glossGradient = ctx.createRadialGradient(
     highlightX,
     highlightY,
@@ -200,6 +349,128 @@ function drawCircle(circle) {
     Math.PI * 2,
   );
   ctx.fillStyle = glossGradient;
+  ctx.fill();
+}
+
+function drawMetallicShine(circle) {
+  ctx.save();
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 0.48;
+  ctx.strokeStyle = "#fff2a4";
+  ctx.lineWidth = Math.max(2, circle.radius * 0.05);
+  ctx.beginPath();
+  ctx.arc(circle.x - circle.radius * 0.06, circle.y - circle.radius * 0.05, circle.radius * 0.58, -2.85, -0.16);
+  ctx.stroke();
+
+  ctx.globalAlpha = 0.18;
+  ctx.fillStyle = "#fff7bd";
+  ctx.beginPath();
+  ctx.ellipse(circle.x - circle.radius * 0.34, circle.y - circle.radius * 0.34, circle.radius * 0.28, circle.radius * 0.16, -0.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.globalAlpha = 0.32;
+  ctx.strokeStyle = "#7d4c00";
+  ctx.lineWidth = Math.max(1.5, circle.radius * 0.035);
+  ctx.beginPath();
+  ctx.arc(circle.x, circle.y, circle.radius * 0.9, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawIceTexture(circle) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(circle.x, circle.y, circle.radius, 0, Math.PI * 2);
+  ctx.clip();
+
+  if (iceTexture.complete && iceTexture.naturalWidth > 0) {
+    ctx.globalAlpha = 0.38;
+    const size = circle.radius * 2.35;
+    ctx.drawImage(
+      iceTexture,
+      circle.x - size / 2 + Math.sin(circle.seed) * circle.radius * 0.15,
+      circle.y - size / 2 + Math.cos(circle.seed) * circle.radius * 0.15,
+      size,
+      size,
+    );
+  } else {
+    ctx.globalAlpha = 0.26;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(circle.x - circle.radius, circle.y - circle.radius, circle.radius * 2, circle.radius * 2);
+  }
+
+  ctx.globalAlpha = 0.1;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(circle.x - circle.radius, circle.y - circle.radius, circle.radius * 2, circle.radius * 2);
+  ctx.restore();
+}
+
+function drawBombDetails(circle) {
+  ctx.save();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#1f2937";
+  ctx.beginPath();
+  ctx.roundRect(
+    circle.x - circle.radius * 0.18,
+    circle.y - circle.radius * 0.88,
+    circle.radius * 0.36,
+    circle.radius * 0.22,
+    circle.radius * 0.06,
+  );
+  ctx.fill();
+
+  ctx.strokeStyle = "#5b3a19";
+  ctx.lineWidth = Math.max(3, circle.radius * 0.07);
+  ctx.beginPath();
+  ctx.moveTo(circle.x + circle.radius * 0.08, circle.y - circle.radius * 0.78);
+  ctx.bezierCurveTo(
+    circle.x + circle.radius * 0.28,
+    circle.y - circle.radius * 1.08,
+    circle.x + circle.radius * 0.52,
+    circle.y - circle.radius * 0.95,
+    circle.x + circle.radius * 0.58,
+    circle.y - circle.radius * 1.22,
+  );
+  ctx.stroke();
+
+  ctx.fillStyle = "#ffcf24";
+  ctx.beginPath();
+  ctx.arc(circle.x + circle.radius * 0.6, circle.y - circle.radius * 1.24, circle.radius * 0.11, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255, 255, 255, 0.32)";
+  ctx.beginPath();
+  ctx.ellipse(circle.x - circle.radius * 0.28, circle.y - circle.radius * 0.28, circle.radius * 0.22, circle.radius * 0.14, -0.6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawHazardIcon(circle) {
+  ctx.save();
+  ctx.fillStyle = "#ffd45c";
+  ctx.strokeStyle = "#30343b";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = Math.max(4, circle.radius * 0.08);
+  ctx.beginPath();
+  ctx.moveTo(circle.x, circle.y - circle.radius * 0.51);
+  ctx.lineTo(circle.x + circle.radius * 0.54, circle.y + circle.radius * 0.42);
+  ctx.lineTo(circle.x - circle.radius * 0.54, circle.y + circle.radius * 0.42);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = "rgba(255, 255, 255, 0.18)";
+  ctx.beginPath();
+  ctx.moveTo(circle.x - circle.radius * 0.36, circle.y + circle.radius * 0.31);
+  ctx.quadraticCurveTo(circle.x - circle.radius * 0.18, circle.y - circle.radius * 0.28, circle.x + circle.radius * 0.37, circle.y + circle.radius * 0.24);
+  ctx.lineTo(circle.x - circle.radius * 0.36, circle.y + circle.radius * 0.31);
+  ctx.fill();
+
+  ctx.fillStyle = "#30343b";
+  ctx.beginPath();
+  ctx.roundRect(circle.x - circle.radius * 0.055, circle.y - circle.radius * 0.29, circle.radius * 0.11, circle.radius * 0.38, circle.radius * 0.045);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(circle.x, circle.y + circle.radius * 0.25, circle.radius * 0.08, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 }
@@ -352,26 +623,53 @@ function update(now) {
 
   const settings = difficultySettings[selectedDifficulty];
   const pressure = currentPressure(now);
-  const spawnEvery = Math.max(480, settings.spawnEvery / pressure);
+  const rushActive = isRushActive(now);
+  const spawnEvery = Math.max(rushActive ? 300 : 480, settings.spawnEvery / pressure / (rushActive ? 1.65 : 1));
+
+  if (now >= nextRushAt) {
+    rushEndsAt = now + rushDuration;
+    nextRushAt = now + rushEvery;
+    lowSpawnUntil = now + 1200;
+    showToast("RUSH");
+    shakeScreen();
+    playTone(180, 0.09, "sawtooth", 0.03);
+  }
+
+  if (combo > 0 && now - lastPopAt > comboWindow) {
+    resetCombo();
+  }
 
   if (now - lastSpawn >= spawnEvery || circles.length === 0) {
     spawnCircle(now);
     lastSpawn = now;
   }
 
-  circles.forEach((circle) => {
-    circle.radius -= circle.shrinkPerSecond * delta;
-  });
+  if (now >= frozenUntil) {
+    circles.forEach((circle) => {
+      circle.radius -= circle.shrinkPerSecond * delta;
+    });
+  }
+
   popEffects = popEffects.filter((effect) => now - effect.startedAt <= effect.duration);
   stains = stains.filter((stain) => now - stain.startedAt <= stain.duration);
 
-  if (circles.some((circle) => circle.radius <= circle.minRadius)) {
+  const expired = circles.filter((circle) => circle.radius <= circle.minRadius);
+  if (expired.length > 0) {
+    handleMiss(1);
+    circles = circles.filter((circle) => circle.radius > circle.minRadius);
+  }
+
+  if (lives <= 0) {
     endGame();
     return;
   }
 
   timeValue.textContent = formatTime(elapsedSeconds(now));
   scoreValue.textContent = score;
+  livesValue.textContent = lives;
+  comboValue.textContent = `${combo}x`;
+  updateFreezeTimer(now);
+  playBeat(now);
 
   drawBackground();
   stains.forEach((stain) => drawStain(stain, now));
@@ -384,17 +682,31 @@ function update(now) {
 function startGame() {
   cancelAnimationFrame(animationFrame);
   clearInterval(countdownTimer);
+  initAudio();
   resizeCanvas();
   circles = [];
   popEffects = [];
   stains = [];
   score = 0;
+  popped = 0;
+  combo = 0;
+  bestCombo = 0;
+  lastPopAt = 0;
+  lives = difficultySettings[selectedDifficulty].lives;
+  frozenUntil = 0;
+  rushEndsAt = 0;
+  nextRushAt = 0;
+  nextBeatAt = 0;
   nextStreakTarget = 25;
   lowSpawnUntil = 0;
   gameState = "countdown";
   scoreValue.textContent = "0";
+  livesValue.textContent = lives;
+  comboValue.textContent = "0x";
   timeValue.textContent = "0:00";
+  hideFreezeTimer();
   hideStreak();
+  resetGoals();
   drawBackground();
   startOverlay.classList.remove("is-visible");
   runCountdown();
@@ -433,6 +745,8 @@ function beginPlay() {
   startedAt = performance.now();
   lastFrame = startedAt;
   lastSpawn = startedAt;
+  nextRushAt = startedAt + 9000;
+  nextBeatAt = startedAt + 450;
   gameState = "playing";
   spawnCircle(startedAt);
   animationFrame = requestAnimationFrame(update);
@@ -445,11 +759,13 @@ function endGame() {
   clearTimeout(streakTimer);
   countdown.classList.remove("is-visible");
   countdown.setAttribute("aria-hidden", "true");
+  hideFreezeTimer();
   drawBackground();
   stains.forEach((stain) => drawStain(stain, performance.now()));
   popEffects.forEach((effect) => drawPopEffect(effect, performance.now()));
   circles.forEach(drawCircle);
-  resultLine.textContent = `Game over. You popped ${score} ${score === 1 ? "circle" : "circles"}.`;
+  playGameOverSound();
+  resultLine.textContent = `Game over. Score ${score}. You popped ${popped} ${popped === 1 ? "circle" : "circles"}.`;
   startButton.textContent = "Play Again";
   startOverlay.classList.add("is-visible");
 }
@@ -470,16 +786,101 @@ function popCircle(event) {
     .filter((hit) => hit.distance <= hit.radius)
     .sort((a, b) => a.radius - b.radius)[0]?.index;
 
-  if (hitIndex === undefined) return;
+  if (hitIndex === undefined) {
+    handleMissClick();
+    return;
+  }
 
   const [poppedCircle] = circles.splice(hitIndex, 1);
   const now = performance.now();
   createStain(poppedCircle, now);
   createPopEffect(poppedCircle, now);
-  score += 1;
+  popped += 1;
+  combo += 1;
+  bestCombo = Math.max(bestCombo, combo);
+  lastPopAt = now;
+
+  const popScore = scoreForCircle(poppedCircle);
+  score += popScore;
   scoreValue.textContent = score;
+  comboValue.textContent = `${combo}x`;
   animateScore();
+  applySpecialBall(poppedCircle, now);
+  scoreValue.textContent = score;
+  updateGoals(poppedCircle);
+  maybeShowPopCallout(poppedCircle, popScore);
   maybeShowStreak();
+  playPopSound(poppedCircle, popScore);
+}
+
+function scoreForCircle(circle) {
+  const sizeRatio = circle.radius / circle.baseRadius;
+  let points = 1;
+
+  if (sizeRatio < 0.3) points = 5;
+  else if (sizeRatio < 0.48) points = 3;
+  else if (sizeRatio < 0.72) points = 2;
+
+  if (circle.type === "gold") points += 5;
+  if (circle.type === "danger") points += 6;
+  if (circle.type === "bomb") points += 2;
+
+  return points + Math.floor(combo / 10);
+}
+
+function applySpecialBall(circle, now) {
+  if (circle.type === "freeze") {
+    frozenUntil = now + freezeDuration;
+    updateFreezeTimer(now);
+    showToast("FREEZE 5s");
+    playTone(520, 0.18, "triangle", 0.05);
+  }
+
+  if (circle.type === "bomb") {
+    const bonus = circles.length;
+    circles.forEach((item) => {
+      createStain(item, now);
+      createPopEffect(item, now);
+    });
+    popped += bonus;
+    score += bonus * 2;
+    circles = [];
+    showToast("BLAST");
+    shakeScreen();
+    playTone(90, 0.18, "sawtooth", 0.06);
+  }
+
+  if (circle.type === "danger") {
+    shakeScreen();
+  }
+}
+
+function updateFreezeTimer(now) {
+  const remaining = Math.max(0, frozenUntil - now);
+
+  if (remaining <= 0) {
+    hideFreezeTimer();
+    return;
+  }
+
+  freezeTimeValue.textContent = (remaining / 1000).toFixed(1);
+  freezeTimer.classList.add("is-visible");
+  freezeTimer.setAttribute("aria-hidden", "false");
+}
+
+function hideFreezeTimer() {
+  freezeTimer.classList.remove("is-visible");
+  freezeTimer.setAttribute("aria-hidden", "true");
+}
+
+function maybeShowPopCallout(circle, points) {
+  const sizeRatio = circle.radius / circle.baseRadius;
+  if (sizeRatio < 0.3) {
+    showToast(`CLUTCH +${points}`);
+    shakeScreen();
+  } else if (points >= 7) {
+    showToast(`+${points}`);
+  }
 }
 
 function animateScore() {
@@ -489,16 +890,22 @@ function animateScore() {
 }
 
 function maybeShowStreak() {
-  if (score < nextStreakTarget) return;
+  if (combo < nextStreakTarget) return;
 
   showStreak(nextStreakTarget);
   nextStreakTarget = nextStreakTarget < 100 ? nextStreakTarget + 25 : nextStreakTarget + 50;
 }
 
 function showStreak(amount) {
+  showToast(`${amount} STREAK`);
+  shakeScreen();
+  playStreakSound();
+}
+
+function showToast(message) {
   clearTimeout(streakTimer);
   lowSpawnUntil = performance.now() + 1250;
-  streakValue.textContent = `${amount} STREAK`;
+  streakValue.textContent = message;
   streakToast.classList.remove("is-visible");
   streakValue.classList.remove("is-changing");
   streakToast.offsetHeight;
@@ -514,6 +921,95 @@ function hideStreak() {
   streakToast.classList.remove("is-visible");
   streakToast.setAttribute("aria-hidden", "true");
   streakValue.classList.remove("is-changing");
+}
+
+function handleMiss(amount) {
+  lives = Math.max(0, lives - amount);
+  livesValue.textContent = lives;
+  resetCombo();
+  showToast(lives > 0 ? "MISS" : "OUT");
+  shakeScreen();
+  playTone(140, 0.16, "square", 0.04);
+}
+
+function handleMissClick() {
+  resetCombo();
+}
+
+function resetCombo() {
+  combo = 0;
+  nextStreakTarget = 25;
+  comboValue.textContent = "0x";
+}
+
+function resetGoals() {
+  [goalScore, goalCombo, goalGold].forEach((goal) => goal.classList.remove("is-complete"));
+}
+
+function updateGoals(circle) {
+  if (score >= 50) goalScore.classList.add("is-complete");
+  if (bestCombo >= 10) goalCombo.classList.add("is-complete");
+  if (circle.type === "gold") goalGold.classList.add("is-complete");
+}
+
+function shakeScreen() {
+  playWrap.classList.remove("is-shaking");
+  playWrap.offsetHeight;
+  playWrap.classList.add("is-shaking");
+}
+
+function initAudio() {
+  if (audioContext) {
+    audioContext.resume?.();
+    return;
+  }
+
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  audioContext = new AudioContextClass();
+  audioContext.resume?.();
+}
+
+function playTone(frequency, duration, type = "sine", volume = 0.04) {
+  if (!audioContext) return;
+
+  const oscillator = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+  const now = audioContext.currentTime;
+
+  oscillator.type = type;
+  oscillator.frequency.setValueAtTime(frequency, now);
+  gain.gain.setValueAtTime(volume, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+  oscillator.connect(gain);
+  gain.connect(audioContext.destination);
+  oscillator.start(now);
+  oscillator.stop(now + duration);
+}
+
+function playPopSound(circle, points) {
+  const base = circle.type === "danger" ? 350 : 460;
+  playTone(base + Math.min(points, 12) * 22, 0.07, "triangle", 0.045);
+  window.setTimeout(() => playTone(720 + combo * 4, 0.045, "sine", 0.025), 35);
+}
+
+function playStreakSound() {
+  playTone(620, 0.08, "triangle", 0.045);
+  window.setTimeout(() => playTone(840, 0.09, "triangle", 0.045), 80);
+}
+
+function playGameOverSound() {
+  playTone(220, 0.12, "sawtooth", 0.04);
+  window.setTimeout(() => playTone(150, 0.2, "sawtooth", 0.035), 120);
+}
+
+function playBeat(now) {
+  if (!audioContext || now < nextBeatAt) return;
+
+  const pressure = currentPressure(now);
+  const interval = Math.max(280, 620 / pressure);
+  nextBeatAt = now + interval;
+  playTone(isRushActive(now) ? 260 : 210, 0.035, "square", isRushActive(now) ? 0.018 : 0.011);
 }
 
 difficultyButtons.forEach((button) => {
